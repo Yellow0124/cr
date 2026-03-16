@@ -30,7 +30,7 @@ def get_global_events(base_url):
 
     while True:
         paged_url = f"{base_url}&page={page}"
-        print(f"📡 [巡航] 正在掃蕩第 {page} 頁...")
+        print(f" 正在掃蕩第 {page} 頁...")
 
         driver.get(paged_url)
         time.sleep(5)
@@ -102,7 +102,7 @@ def scrape_kktix_event_detail(url):
                     event_data["artist"] = p
                     break
 
-        # --- 🔍 4. 售票時間：精準過濾與狀態偵測 ---
+        # ---  4. 售票時間：精準過濾與狀態偵測 ---
         sale_keywords = r'(?:啟售|售票|開賣|START|ON SALE|售票時間|開賣時間|發售)'
         date_pattern = r'(202[4-6][/\-\.年\s][0-9]{1,2}[/\-\.月\s][0-9]{1,2}日?)'
         time_pattern = r'([0-9]{1,2}[:：][0-9]{2})'
@@ -126,7 +126,7 @@ def scrape_kktix_event_detail(url):
                 r'[年|月|日]', '/', s_m.group(1)).replace("-", "/").replace(".", "/").strip()
             detected_sale_time = s_m.group(2).replace("：", ":")
 
-            # 🌟 關鍵修正：檢查抓到的啟售日期是否等於活動日期？
+            # 修正：檢查抓到的啟售日期是否等於活動日期？
             # 如果相等，且網頁上有購票按鈕，則高機率是誤抓，應設為已開賣
             if detected_sale_date == event_data["event_date"] and is_selling:
                 event_data["sale_date"] = "已開賣"
@@ -159,13 +159,13 @@ def scrape_kktix_event_detail(url):
                 for sym in [")", "）", "】", "※", "📍", "💡", "🏠", "票券", "注意"]:
                     event_data[key] = event_data[key].split(sym)[0].strip()
 
-        # 6. 🔥 票價與票種 (三階段救援邏輯)
+        # 6.  票價與票種 (三階段救援邏輯)
         found_tickets = {}
         year_blacklist = [str(x) for x in range(2024, 2028)]
         bad_keywords = ["日期", "時間", "地點", "地址", "202",
                         "手續費", "退票", "0800", "尚未", "結束", "剩餘", "數量"]
 
-        # 🚀 階段 A: 標準表格掃描 (精確度最高)
+        #  階段 A: 標準表格掃描 (精確度最高)
         rows = soup.find_all("tr")
         for row in rows:
             cells = [c.get_text(strip=True)
@@ -187,7 +187,7 @@ def scrape_kktix_event_detail(url):
                                 if p_val not in found_tickets or len(n_cl) > len(found_tickets[p_val]):
                                     found_tickets[p_val] = n_cl
 
-        # 🚀 階段 B: 鄰近語意掃描 (補底救援)
+        #  階段 B: 鄰近語意掃描 (補底救援)
         if not found_tickets:
             matches = re.findall(
                 r'([^ \s\n\r]{2,10})[\s:：｜]*?(?:NT\$|TWD|\$)\s?([0-9,]{3,5})', clean_text)
@@ -198,7 +198,7 @@ def scrape_kktix_event_detail(url):
                     if 1 < len(n_cl) < 10 and not n_cl.isdigit() and not any(k in n_cl for k in bad_keywords):
                         found_tickets[p] = n_cl
 
-        # 🚀 階段 C: 孤兒數字救援 (末兩位為 0 且排除日期的純數字)
+        #  階段 C: 錯誤排除 (末兩位為 0 且排除日期的純數字)
         if not found_tickets:
             potential_prices = re.findall(
                 r'(?<![0-9/])(?:NT\$|TWD|\$)?\s?([4-9]00|[1-9][0-9]00)(?![0-9/])', clean_text)
@@ -214,5 +214,5 @@ def scrape_kktix_event_detail(url):
 
         return event_data
     except Exception as e:
-        print(f"💥 解析錯誤: {e}")
+        print(f" 解析錯誤: {e}")
         return None
