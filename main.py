@@ -20,19 +20,32 @@ def main():
             event_data = scrape_kktix_event_detail(url)
             if event_data:
                 success_count += 1
-                print("=" * 70)
+                print("=" * 60)
                 print(f"📌 【活動名稱】: {event_data['event_name']}")
-                print(f"   🎤 演出藝人: {event_data['artist']}")
-                print(f"   📅 活動日期: {event_data['event_date']}")
+                print(f"   演出藝人: {event_data['artist']}")
+                print(f"   活動日期: {event_data['event_date']}")
                 print(
-                    f"   🔥 啟售時間: {event_data['sale_date']} ({event_data['sale_time_only']})")
-                print(f"   📍 活動地點: {event_data['location']}")
+                    f"   啟售時間: {event_data['sale_date']} ({event_data['sale_time_only']})")
+                print(f"   活動地點: {event_data['location']}")
+                print(f"   活動地址: {event_data.get('address', '未取得')}")
+                print(f"   活動連結: {event_data['original_url']}")
 
-                if event_data['tickets']:
-                    print("   🎟️ 票種票價:")
-                    for t in event_data['tickets']:
-                        print(f"      - {t['ticket_type']}: ${t['price']}")
-                print("=" * 70)
+                # 🌟 票種與票價逐行顯示
+                if event_data.get('tickets'):
+                    # 提取所有票種名稱並串接
+                    ticket_types = [t['ticket_type']
+                                    for t in event_data['tickets']]
+                    # 提取所有價格並串接 (這裡不用加上千分位，維持你要求的純數字格式)
+                    ticket_prices = [str(t['price'])
+                                     for t in event_data['tickets']]
+
+                    print(f"   票種: {', '.join(ticket_types)}")
+                    print(f"   票價: {', '.join(ticket_prices)} 元")
+                else:
+                    print("   票種: 未取得")
+                    print("   票價: 未取得")
+
+                print("=" * 60)
         except Exception as e:
             print(f"💥 錯誤: {e}")
 
