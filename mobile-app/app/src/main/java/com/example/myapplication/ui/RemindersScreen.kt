@@ -1,6 +1,8 @@
 package com.example.myapplication.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
@@ -25,6 +28,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,7 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.myapplication.ReminderItem
+import com.example.myapplication.ui.ReminderItem
 
 @Composable
 fun RemindersScreen(
@@ -62,6 +66,20 @@ fun RemindersScreen(
                 actionIcon = Icons.Rounded.Refresh,
                 onAction = onRefresh
             )
+        }
+        
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(), 
+                colors = CardDefaults.cardColors(containerColor = StageBlack), 
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("🤖 AI 搶票防漏推播優化中", color = Gold, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("針對熱門秒殺活動（如 TWS、BABYMONSTER），系統已自動調高通知權重，將於開賣前 60、30、10 分鐘透過常駐通知進行強力喚醒。", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                }
+            }
         }
         
         item { ReminderCoachCard(reminders.size) }
@@ -111,8 +129,6 @@ fun RemindersScreen(
                 }
             }
         }
-        
-        item { Spacer(modifier = Modifier.height(16.dp)) }
     }
 }
 
@@ -146,7 +162,7 @@ internal fun ReminderCoachCard(count: Int) {
             )
             Spacer(modifier = Modifier.height(14.dp))
             Row(
-                modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 HeroPill("60 分鐘前")

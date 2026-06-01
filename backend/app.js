@@ -6,7 +6,9 @@ const eventsRoute = require('./routes/events');
 const createAuthRouter = require('./routes/auth');
 const createRemindersRouter = require('./routes/reminders');
 const statsRoute = require('./routes/stats');
+const parkingRouter = require('./routes/parking');
 const { authMiddleware } = require('./auth');
+
 
 function createApp(options = {}) {
   const pool = options.pool || defaultPool;
@@ -51,6 +53,7 @@ function createApp(options = {}) {
   app.use('/api/events', eventsRoute);
   app.use('/api/reminders', createRemindersRouter({ pool, requireAuth }));
   app.use('/api/stats', statsRoute);
+  app.use('/api/parking', parkingRouter);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'not_found', path: req.path });

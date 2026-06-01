@@ -5,7 +5,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,9 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.ConfirmationNumber
@@ -42,35 +39,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.myapplication.EventItem
-import com.example.myapplication.data.WalletTicket
-
-val Canvas = Color(0xFFF6F1E8)
-val SurfaceIvory = Color(0xFFFFFCF6)
-val StageBlack = Color(0xFF08111F)
-val Ink = Color(0xFF111827)
-val Muted = Color(0xFF6B7280)
-val Mist = Color(0xFFE9DFD1)
-val FineLine = Color(0xFFD8CBBE)
-val Porcelain = Color(0xFFFFFFFF)
-val Gold = Color(0xFFD8A84E)
-val GoldSoft = Color(0xFFFFF2CF)
-val Cobalt = Color(0xFF245CFF)
-val CobaltSoft = Color(0xFFE8EEFF)
-val Success = Color(0xFF0F8A5F)
-val Rose = Color(0xFFD64545)
-val Plum = Color(0xFF7C3AED)
+import com.example.myapplication.ui.EventItem
+import com.example.myapplication.ui.WalletTicket
+import java.util.Locale
 
 @Composable
 fun PageTitle(title: String, subtitle: String) {
@@ -546,5 +525,3 @@ fun formatReminderOffsets(value: String): String {
     val minutes = Regex("""\d+""").findAll(value).map { it.value }.distinct().toList()
     return if (minutes.isEmpty()) "尚未設定" else "提前 ${minutes.joinToString("、")} 分鐘"
 }
-
-import java.util.Locale

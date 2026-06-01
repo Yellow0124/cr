@@ -1,6 +1,9 @@
 package com.example.myapplication.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,17 +13,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.LocalActivity
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Stars
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.myapplication.EventItem
-import com.example.myapplication.data.SummaryStats
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun HomeScreen(
@@ -81,6 +90,26 @@ fun HomeScreen(
             }
         }
         
+        // 🌟 整合功能五：組員開發的搶票美食應援補給站
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = SurfaceIvory),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, FineLine.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("搶票應援補給站 🍗", fontWeight = FontWeight.Black, color = Ink, fontSize = 16.sp)
+                    Text("結合訂單大數據，推薦淡水區最受資管系歡迎的搶票應援熱門美食：", color = Muted, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("• 櫻鴨館搶票必勝鴨肉飯", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Success, modifier = Modifier.weight(1f))
+                        Text("• 肯德基補給蛋撻餐", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Rose, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+        
         // 分類標題
         item {
             SectionHeader(
@@ -110,43 +139,43 @@ fun HomeScreen(
 }
 
 @Composable
-internal fun StageHero(summary: SummaryStats) {
-    androidx.compose.material3.Card(
+fun StageHero(summary: SummaryStats) {
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(30.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = StageBlack),
-        elevation = androidx.compose.material3.CardDefaults.cardElevation(defaultElevation = 4.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f))
+        shape = RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = StageBlack),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f))
     ) {
         Column(
             modifier = Modifier
                 .background(
-                    androidx.compose.ui.graphics.Brush.linearGradient(
-                        listOf(StageBlack, androidx.compose.ui.graphics.Color(0xFF10284B), androidx.compose.ui.graphics.Color(0xFF1F1710))
+                    Brush.linearGradient(
+                        listOf(StageBlack, Color(0xFF10284B), Color(0xFF1F1710))
                     )
                 )
                 .padding(24.dp)
         ) {
-            androidx.compose.material3.Text(
+            Text(
                 "售票資訊平台",
                 color = Gold,
-                fontSize = androidx.compose.ui.unit.sp(12),
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Black
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Black
             )
             Spacer(modifier = Modifier.height(6.dp))
-            androidx.compose.material3.Text(
+            Text(
                 "跨網站統合搜尋",
-                color = androidx.compose.ui.graphics.Color.White,
-                fontSize = androidx.compose.ui.unit.sp(28),
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
-                lineHeight = androidx.compose.ui.unit.sp(34)
+                color = Color.White,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black,
+                lineHeight = 34.sp
             )
             Spacer(modifier = Modifier.height(10.dp))
-            androidx.compose.material3.Text(
+            Text(
                 "整合全台灣各大售票網站的活動資訊，讓你一次掌握所有演唱會與展覽，不再錯過任何售票時段。",
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.78f),
-                fontSize = androidx.compose.ui.unit.sp(15),
-                lineHeight = androidx.compose.ui.unit.sp(22)
+                color = Color.White.copy(alpha = 0.78f),
+                fontSize = 15.sp,
+                lineHeight = 22.sp
             )
         }
     }

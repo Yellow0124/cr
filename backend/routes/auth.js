@@ -1,4 +1,6 @@
 const express = require('express');
+const pool = require('../config/db'); // 🎯 關鍵在這裡！必須是兩個點（../），退回上一層才能找到 config！
+
 const {
   normalizeEmail,
   validateEmail,
@@ -6,11 +8,16 @@ const {
   hashPassword,
   verifyPassword,
   createToken
-} = require('../auth');
+} = require('../auth'); 
 
-function createAuthRouter({ pool, secret, now, requireAuth }) {
+function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
+  // 💡 如果 app.js 有傳 pool 進來，就用傳進來的；沒有就用上面 require 的 pool
+  const activePool = injectedPool || pool; 
   const router = express.Router();
 
+  // ==========================================
+  // 1. POST /register - 註冊新帳號
+  // ==========================================
   router.post('/register', async (req, res) => {
     try {
       const email = normalizeEmail(req.body?.email);
@@ -24,17 +31,18 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
       }
 
       const passwordHash = hashPassword(password);
-      const [result] = await pool.execute(
+
+      const [result] = await activePool.execute(
         `
         INSERT INTO users (email, password_hash)
-        VALUES (:email, :passwordHash)
+        VALUES (?, ?)
         `,
-        { email, passwordHash }
+        [email, passwordHash]
       );
 
-      const [rows] = await pool.execute(
-        `SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1`,
-        { id: result.insertId }
+      const [rows] = await activePool.execute(
+        'SELECT id, email, registered_at AS createdAt FROM users WHERE id = ? LIMIT 1',
+        [result.insertId]
       );
 
       const user = rows[0];
@@ -51,6 +59,9 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
     }
   });
 
+  // ==========================================
+  // 2. POST /login - 帳號登入
+  // ==========================================
   router.post('/login', async (req, res) => {
     try {
       const email = normalizeEmail(req.body?.email);
@@ -60,9 +71,9 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
         return res.status(400).json({ error: 'missing_fields', need: ['email', 'password'] });
       }
 
-      const [rows] = await pool.execute(
-        `SELECT id, email, password_hash FROM users WHERE email = :email LIMIT 1`,
-        { email }
+      const [rows] = await activePool.execute(
+        `SELECT id, email, password_hash FROM users WHERE email = ? LIMIT 1`,
+        [email]
       );
       const user = rows[0];
 
@@ -80,10 +91,16 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
     }
   });
 
+  // ==========================================
+  // 3. GET /me - 取得當前登入者資訊
+  // ==========================================
   router.get('/me', requireAuth, async (req, res) => {
     res.json({ user: req.user });
   });
 
+  // ==========================================
+  // 4. DELETE /me - 註銷使用者帳號
+  // ==========================================
   router.delete('/me', requireAuth, async (req, res) => {
     try {
       const password = String(req.body?.password || '');
@@ -91,9 +108,9 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
         return res.status(400).json({ error: 'missing_fields', need: ['password'] });
       }
 
-      const [rows] = await pool.execute(
-        `SELECT id, email, password_hash FROM users WHERE email = :email LIMIT 1`,
-        { email: req.user.email }
+      const [rows] = await activePool.execute(
+        `SELECT id, email, password_hash FROM users WHERE email = ? LIMIT 1`,
+        [req.user.email]
       );
       const user = rows[0];
 
@@ -101,9 +118,9 @@ function createAuthRouter({ pool, secret, now, requireAuth }) {
         return res.status(401).json({ error: 'invalid_credentials' });
       }
 
-      const [result] = await pool.execute(
-        `DELETE FROM users WHERE id = :userId`,
-        { userId: req.user.id }
+      const [result] = await activePool.execute(
+        `DELETE FROM users WHERE id = ?`,
+        [req.user.id]
       );
 
       res.json({ ok: result.affectedRows > 0 });

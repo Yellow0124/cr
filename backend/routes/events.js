@@ -5,23 +5,22 @@ const router = express.Router();
 
 const eventFields = `
   event_id AS id,
-  COALESCE(NULLIF(\`活動名稱\`, ''), '未命名活動') AS title,
-  COALESCE(\`藝人\`, '') AS artist,
-  COALESCE(\`搶票時間\`, '') AS saleTime,
-  COALESCE(\`活動時間\`, '') AS activityTime,
-  COALESCE(\`活動地點\`, '') AS venue,
-  COALESCE(\`活動地址\`, '') AS address,
-  COALESCE(\`票價\`, '') AS price,
-  COALESCE(\`票種\`, '') AS ticketType,
-  COALESCE(\`網址\`, '') AS url,
-  COALESCE(\`來源網站\`, '') AS source,
-  COALESCE(\`資料來源檔\`, '') AS sourceFile,
-  created_at AS createdAt
+  COALESCE(event_name, '未命名活動') AS title,
+  '' AS artist,                                                    -- 🛡️ 防禦
+  COALESCE(DATE_FORMAT(ticket_sale_time, '%Y-%m-%d %H:%i:%s'), '') AS saleTime,
+  COALESCE(DATE_FORMAT(event_time, '%Y-%m-%d %H:%i:%s'), '') AS activityTime,
+  COALESCE(venue_name, '未提供場地') AS venue,
+  COALESCE(venue_address, '') AS address,
+  '' AS price,                                                     -- 🛡️ 防禦
+  '尚未公布' AS ticketType,                                        -- 🛡️ 核心修正：直接給固定字串，完美避開 genres 欄位噴錯！
+  COALESCE(event_url, '') AS url,
+  COALESCE(source_site, '') AS source,
+  COALESCE(scraped_at, '') AS scrapedAt
 `;
 
 function buildEventWhere(query) {
   const conditions = [];
-  const params = {};
+  const params = [];
   const keyword = String(query.keyword || query.q || '').trim();
   const venue = String(query.venue || query.location || '').trim();
   const source = String(query.source || '').trim();
@@ -31,49 +30,42 @@ function buildEventWhere(query) {
 
   if (featured) {
     conditions.push(`(
-      \`活動名稱\` IS NOT NULL AND
-      \`活動名稱\` <> '' AND
-      \`活動名稱\` NOT LIKE '%Tickets in Japan%' AND
+      event_name IS NOT NULL AND
+      event_name <> '' AND
+      event_name NOT LIKE '%Tickets in Japan%' AND
       (
-        \`活動時間\` REGEXP '20[0-9]{2}' OR
-        \`搶票時間\` REGEXP '20[0-9]{2}' OR
-        (\`活動地點\` IS NOT NULL AND \`活動地點\` <> '' AND \`活動地點\` <> '未提供')
+        event_time IS NOT NULL OR
+        ticket_sale_time IS NOT NULL OR
+        (venue_name IS NOT NULL AND venue_name <> '' AND venue_name <> '未提供')
       )
     )`);
   }
 
   if (keyword) {
     conditions.push(`(
-      \`活動名稱\` LIKE :keyword OR
-      \`藝人\` LIKE :keyword OR
-      \`活動地點\` LIKE :keyword OR
-      \`活動地址\` LIKE :keyword OR
-      \`票價\` LIKE :keyword OR
-      \`票種\` LIKE :keyword OR
-      \`來源網站\` LIKE :keyword
+      event_name LIKE ? OR
+      venue_name LIKE ? OR
+      venue_address LIKE ? OR
+      source_site LIKE ?
     )`);
-    params.keyword = `%${keyword}%`;
+    const kwParam = `%${keyword}%`;
+    params.push(kwParam, kwParam, kwParam, kwParam);
   }
 
   if (venue && venue !== '全部') {
-    conditions.push(`(\`活動地點\` LIKE :venue OR \`活動地址\` LIKE :venue)`);
-    params.venue = `%${venue}%`;
+    conditions.push(`(venue_name LIKE ? OR venue_address LIKE ?)`);
+    const venueParam = `%${venue}%`;
+    params.push(venueParam, venueParam);
   }
 
   if (source && source !== '全部') {
-    conditions.push(`\`來源網站\` LIKE :source`);
-    params.source = `%${source}%`;
+    conditions.push(`source_site LIKE ?`);
+    params.push(`%${source}%`);
   }
 
   if (startDate && endDate) {
-    conditions.push(`
-      STR_TO_DATE(
-        REPLACE(REGEXP_SUBSTR(\`活動時間\`, '[0-9]{4}[./-][0-9]{1,2}[./-][0-9]{1,2}'), '.', '-'),
-        '%Y-%m-%d'
-      ) BETWEEN :startDate AND :endDate
-    `);
-    params.startDate = startDate;
-    params.endDate = endDate;
+    conditions.push(`event_time BETWEEN ? AND ?`);
+    params.push(startDate, endDate);
   }
 
   return {
@@ -84,28 +76,37 @@ function buildEventWhere(query) {
 
 router.get('/', async (req, res) => {
   try {
-    const limit = Math.max(Math.min(Number(req.query.limit || 100), 300), 1);
-    const offset = Math.max(Number(req.query.offset || 0), 0);
+    const rawLimit = Number(req.query.limit || 100);
+    const rawOffset = Number(req.query.offset || 0);
+    
+    const limit = Math.max(Math.min(rawLimit, 300), 1);
+    const offset = Math.max(rawOffset, 0);
+    
     const { whereSql, params } = buildEventWhere(req.query);
+
+    const selectParams = [];
+    for (let i = 0; i < params.length; i++) {
+      selectParams.push(String(params[i]));
+    }
 
     const [rows] = await pool.execute(
       `
       SELECT ${eventFields}
-      FROM events
+      FROM v_all_events_summary
       ${whereSql}
-      ORDER BY created_at DESC, event_id DESC
-      LIMIT ${limit} OFFSET ${offset}
+      ORDER BY event_id DESC
+      LIMIT ${Number.parseInt(limit, 10)} OFFSET ${Number.parseInt(offset, 10)}
       `,
-      params
+      selectParams
     );
 
-    const [[countRow]] = await pool.execute(
-      `SELECT COUNT(*) AS total FROM events ${whereSql}`,
-      params
+    const [countRows] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM v_all_events_summary ${whereSql}`,
+      selectParams
     );
 
     res.json({
-      total: Number(countRow.total || 0),
+      total: Number(countRows[0]?.total || 0),
       items: rows
     });
   } catch (err) {
@@ -117,19 +118,19 @@ router.get('/', async (req, res) => {
 router.get('/meta', async (_req, res) => {
   try {
     const [venues] = await pool.query(`
-      SELECT \`活動地點\` AS venue, COUNT(*) AS total
-      FROM events
-      WHERE \`活動地點\` IS NOT NULL AND \`活動地點\` <> ''
-      GROUP BY \`活動地點\`
+      SELECT name AS venue, COUNT(*) AS total
+      FROM venues
+      WHERE name IS NOT NULL AND name <> ''
+      GROUP BY name
       ORDER BY total DESC
       LIMIT 30
     `);
 
     const [sources] = await pool.query(`
-      SELECT \`來源網站\` AS source, COUNT(*) AS total
+      SELECT source_site AS source, COUNT(*) AS total
       FROM events
-      WHERE \`來源網站\` IS NOT NULL AND \`來源網站\` <> ''
-      GROUP BY \`來源網站\`
+      WHERE source_site IS NOT NULL AND source_site <> ''
+      GROUP BY source_site
       ORDER BY total DESC
       LIMIT 20
     `);
@@ -143,9 +144,10 @@ router.get('/meta', async (_req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
+    const eventId = Number(req.params.id);
     const [rows] = await pool.execute(
-      `SELECT ${eventFields} FROM events WHERE event_id = :id LIMIT 1`,
-      { id: Number(req.params.id) }
+      `SELECT ${eventFields} FROM v_all_events_summary WHERE event_id = ? LIMIT 1`,
+      [eventId]
     );
 
     if (!rows.length) {

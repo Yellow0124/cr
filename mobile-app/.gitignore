@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+parking-android-node-mysql/backend/node_modules/
+node_modules/
+parking-android-node-mysql/backend/.env
+.env
+.env.local

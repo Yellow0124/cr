@@ -1,16 +1,13 @@
-const crypto = require('node:crypto');
-
-const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
-const PASSWORD_KEY_LENGTH = 64;
-const PASSWORD_ITERATIONS = 120000;
-const PASSWORD_DIGEST = 'sha512';
+const jwt = require('jsonwebtoken');
+const pool = require('./config/db');
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
 function validateEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(email);
 }
 
 function validatePassword(password) {
@@ -18,108 +15,71 @@ function validatePassword(password) {
 }
 
 function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto
-    .pbkdf2Sync(String(password), salt, PASSWORD_ITERATIONS, PASSWORD_KEY_LENGTH, PASSWORD_DIGEST)
-    .toString('hex');
-  return `pbkdf2:${PASSWORD_ITERATIONS}:${salt}:${hash}`;
+  return Buffer.from(password).toString('base64'); 
 }
 
-function verifyPassword(password, storedHash) {
-  const [scheme, iterationsText, salt, hash] = String(storedHash || '').split(':');
-  if (scheme !== 'pbkdf2' || !iterationsText || !salt || !hash) return false;
-
-  const iterations = Number(iterationsText);
-  if (!Number.isFinite(iterations) || iterations <= 0) return false;
-
-  const candidate = crypto
-    .pbkdf2Sync(String(password), salt, iterations, Buffer.from(hash, 'hex').length, PASSWORD_DIGEST)
-    .toString('hex');
-
-  return crypto.timingSafeEqual(Buffer.from(candidate, 'hex'), Buffer.from(hash, 'hex'));
+function verifyPassword(password, hash) {
+  return hashPassword(password) === hash;
 }
 
-function base64UrlEncode(value) {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
-
-function sign(value, secret) {
-  return crypto.createHmac('sha256', secret).update(value).digest('base64url');
-}
-
-function createToken(user, secret, now = () => Math.floor(Date.now() / 1000)) {
-  const header = base64UrlEncode({ alg: 'HS256', typ: 'JWT' });
-  const payload = base64UrlEncode({
-    sub: String(user.id),
-    email: user.email,
-    iat: now(),
-    exp: now() + TOKEN_TTL_SECONDS
-  });
-  const body = `${header}.${payload}`;
-  return `${body}.${sign(body, secret)}`;
-}
-
-function verifyToken(token, secret, now = () => Math.floor(Date.now() / 1000)) {
-  const parts = String(token || '').split('.');
-  if (parts.length !== 3) return null;
-
-  const [header, payload, signature] = parts;
-  const body = `${header}.${payload}`;
-  const expected = sign(body, secret);
-  if (
-    signature.length !== expected.length ||
-    !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-  ) {
-    return null;
-  }
-
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    const userId = Number(data.sub);
-    if (!Number.isInteger(userId) || userId <= 0) return null;
-    if (Number(data.exp || 0) <= now()) return null;
-    return { userId, email: data.email };
-  } catch (_err) {
-    return null;
-  }
-}
-
-function authMiddleware({ pool, secret, now }) {
-  return async (req, res, next) => {
-    try {
-      const header = String(req.headers.authorization || '');
-      const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-      const session = verifyToken(token, secret, now);
-
-      if (!session) {
-        return res.status(401).json({ error: 'unauthorized' });
-      }
-
-      const [rows] = await pool.execute(
-        `SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1`,
-        { id: session.userId }
-      );
-
-      if (!rows.length) {
-        return res.status(401).json({ error: 'unauthorized' });
-      }
-
-      req.user = rows[0];
-      next();
-    } catch (err) {
-      console.error('auth middleware error:', err);
-      res.status(500).json({ error: 'server_error', message: err.message });
-    }
+function createToken(user, secret, now) {
+  const payload = {
+    id: user.id,
+    userId: user.id,
+    email: user.email
   };
+  return jwt.sign(payload, secret || process.env.JWT_SECRET || 'your_secret', {
+    expiresIn: '7d'
+  });
 }
 
-module.exports = {
-  normalizeEmail,
-  validateEmail,
-  validatePassword,
-  hashPassword,
-  verifyPassword,
-  createToken,
-  verifyToken,
-  authMiddleware
+// 🛡️ JWT 安全驗證中介層
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'unauthorized', message: '缺少驗證憑證' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const secret = process.env.JWT_SECRET || 'your_secret';
+    const decoded = jwt.verify(token, secret);
+
+    // 🎯 核心修正：加入強制防禦，確保 userId 絕對不會是 undefined
+    const userId = decoded.id || decoded.userId || (decoded.user ? decoded.user.id : null);
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'unauthorized', message: '憑證內解析不到使用者識別碼' });
+    }
+
+    const [rows] = await pool.execute(
+      'SELECT id, email, registered_at AS createdAt FROM users WHERE id = ? LIMIT 1',
+      [userId]
+    );
+
+    if (!rows.length) {
+      return res.status(401).json({ error: 'unauthorized', message: '該使用者帳號不存在' });
+    }
+
+    req.user = rows[0];
+    next();
+  } catch (err) {
+    console.error('auth middleware error:', err);
+    return res.status(401).json({ error: 'unauthorized', message: '憑證已過期或不合法' });
+  }
+}
+
+const authMiddlewareUniversal = function(config) {
+  return requireAuth;
 };
+
+authMiddlewareUniversal.normalizeEmail = normalizeEmail;
+authMiddlewareUniversal.validateEmail = validateEmail;
+authMiddlewareUniversal.authMiddleware = authMiddlewareUniversal;
+authMiddlewareUniversal.validatePassword = validatePassword;
+authMiddlewareUniversal.hashPassword = hashPassword;
+authMiddlewareUniversal.verifyPassword = verifyPassword;
+authMiddlewareUniversal.createToken = createToken;
+authMiddlewareUniversal.requireAuth = requireAuth;
+
+module.exports = authMiddlewareUniversal;
