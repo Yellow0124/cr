@@ -213,17 +213,31 @@ class MainActivity : ComponentActivity() {
                             )
 
                             AppTab.Wallet -> WalletScreen(
-                                tickets = walletTickets,
-                                onSave = { t -> walletTickets = listOf(t) + walletTickets; saveWalletTickets(walletTickets); toast("票券已加入票券夾") },
-                                onUpdate = { t -> walletTickets = walletTickets.map { if (it.id == t.id) t else it }; saveWalletTickets(walletTickets); toast("票券已更新") },
-                                onDelete = { t -> walletTickets = walletTickets.filterNot { it.id == t.id }; saveWalletTickets(walletTickets); toast("票券已移除") },
+                                    tickets = walletTickets,
+                                    onSave = { t -> 
+                                    walletTickets = listOf(t) + walletTickets 
+                                    saveWalletTickets(walletTickets) // 確保存入 SharedPreferences
+                                },
+                                onUpdate = { t -> 
+                                    walletTickets = walletTickets.map { if (it.id == t.id) t else it }
+                                    saveWalletTickets(walletTickets) 
+                                },
+                                onDelete = { t -> 
+                                    walletTickets = walletTickets.filterNot { it.id == t.id }
+                                    saveWalletTickets(walletTickets) 
+                                },
                                 onShare = { shareWalletTicket(it) }
                             )
 
                             AppTab.Reminders -> RemindersScreen(
                                 reminders = reminders, 
                                 onRefresh = { loadReminders { reminders = it } },
-                                onDelete = { r -> deleteReminder(r.id) { toast("提醒已移除"); loadReminders { reminders = it } } }
+                                onDelete = { r -> 
+                                    deleteReminder(r.id) { 
+                                        toast("提醒已移除")
+                                        loadReminders { reminders = it } 
+                                    } 
+                                }
                             )
 
                             AppTab.Budget -> com.example.myapplication.ui.BudgetRecommendScreen(
@@ -491,7 +505,6 @@ class MainActivity : ComponentActivity() {
     @Composable private fun AnalysisScreen(summary: SummaryStats, priceStats: PriceStats, timeStats: TimeStats, venueStats: VenueStats, onRefresh: () -> Unit) { Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp)) { FeatureHeader("資料分析", "資料洞察", "轉化為可視化輔助展示資訊。", Icons.Rounded.Analytics, Plum); Row { MetricCard("活動樣本", summary.events.toString(), "筆", Icons.Rounded.Analytics, Modifier.weight(1f)); MetricCard("均價落點", formatCurrency(priceStats.averageMaxPrice), "估算", Icons.Rounded.TrendingUp, Modifier.weight(1f)) } } }
     @Composable private fun ProgressRow(label: String, value: Int, max: Int, color: Color) { val ratio = if (max <= 0) 0f else value.toFloat() / max.toFloat(); Column { Text(label); LinearProgressIndicator(progress = { ratio }, color = color, modifier = Modifier.fillMaxWidth()) } }
 
-    // 🛡️ 調整順序一：將 SharedPreferences 讀取方法移至上方，確保變數生命週期先對齊
     private fun loadWalletTickets(): List<WalletTicket> {
         val prefs = getSharedPreferences("ticket_wallet", Context.MODE_PRIVATE)
         return runCatching {
@@ -544,7 +557,6 @@ class MainActivity : ComponentActivity() {
         }.onFailure { onResult(emptyList()) }
     }
     
-    // 🛡️ 調整順序二：移到 walletTickets 初始化下方，完美修復 Unresolved reference 紅字
     private fun loadSummary(onResult: (SummaryStats) -> Unit) { onResult(SummaryStats(84, 16, 8, 3)) }
     private fun loadPriceStats(onResult: (PriceStats) -> Unit) { onResult(PriceStats()) }
     private fun loadTimeStats(onResult: (TimeStats) -> Unit) { onResult(TimeStats()) }
@@ -558,7 +570,32 @@ class MainActivity : ComponentActivity() {
         return runCatching { URLEncoder.encode(v, "UTF-8") }.getOrDefault(v)
     }
 
-    private fun get(path: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) { onError("sandbox") }
+    private fun get(path: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
+        val url = if (path.startsWith("http")) path else "$API_BASE_URL$path"
+        val requestBuilder = Request.Builder().url(url).get()
+        if (activeToken.isNotBlank()) {
+            requestBuilder.header("Authorization", "Bearer $activeToken")
+        }
+
+        client.newCall(requestBuilder.build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                runOnUiThread { onError(e.message ?: "network_error") }
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val body = it.body?.string().orEmpty()
+                    runOnUiThread {
+                        if (it.isSuccessful) {
+                            onSuccess(body)
+                        } else {
+                            onError(body.ifBlank { "HTTP ${it.code}" })
+                        }
+                    }
+                }
+            }
+        })
+    }
     private fun post(path: String, body: String, onSuccess: (String) -> Unit, onError: (String) -> Unit) {
         if (path.contains("login")) {
             onSuccess(JSONObject().put("token", "mock").put("user", JSONObject().put("id", 1).put("email", "student@tku.edu.tw")).toString())

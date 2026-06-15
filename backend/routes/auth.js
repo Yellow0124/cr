@@ -11,7 +11,6 @@ const {
 } = require('../auth'); 
 
 function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
-  // 💡 如果 app.js 有傳 pool 進來，就用傳進來的；沒有就用上面 require 的 pool
   const activePool = injectedPool || pool; 
   const router = express.Router();
 
@@ -35,14 +34,14 @@ function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
       const [result] = await activePool.execute(
         `
         INSERT INTO users (email, password_hash)
-        VALUES (?, ?)
+        VALUES (:email, :passwordHash)
         `,
-        [email, passwordHash]
+        { email, passwordHash }
       );
 
       const [rows] = await activePool.execute(
-        'SELECT id, email, registered_at AS createdAt FROM users WHERE id = ? LIMIT 1',
-        [result.insertId]
+        'SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1',
+        { id: result.insertId }
       );
 
       const user = rows[0];
@@ -72,8 +71,8 @@ function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
       }
 
       const [rows] = await activePool.execute(
-        `SELECT id, email, password_hash FROM users WHERE email = ? LIMIT 1`,
-        [email]
+        `SELECT id, email, password_hash FROM users WHERE email = :email LIMIT 1`,
+        { email }
       );
       const user = rows[0];
 
@@ -109,8 +108,8 @@ function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
       }
 
       const [rows] = await activePool.execute(
-        `SELECT id, email, password_hash FROM users WHERE email = ? LIMIT 1`,
-        [req.user.email]
+        `SELECT id, email, password_hash FROM users WHERE email = :email LIMIT 1`,
+        { email: req.user.email }
       );
       const user = rows[0];
 
@@ -119,8 +118,8 @@ function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
       }
 
       const [result] = await activePool.execute(
-        `DELETE FROM users WHERE id = ?`,
-        [req.user.id]
+        `DELETE FROM users WHERE id = :userId`,
+        { userId: req.user.id }
       );
 
       res.json({ ok: result.affectedRows > 0 });

@@ -33,8 +33,11 @@ function createToken(user, secret, now) {
   });
 }
 
-// 🛡️ JWT 安全驗證中介層
-async function requireAuth(req, res, next) {
+function createRequireAuth(config = {}) {
+  const activePool = config.pool || pool;
+  const activeSecret = config.secret || process.env.JWT_SECRET || 'your_secret';
+
+  return async function requireAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -42,8 +45,7 @@ async function requireAuth(req, res, next) {
     }
 
     const token = authHeader.split(' ')[1];
-    const secret = process.env.JWT_SECRET || 'your_secret';
-    const decoded = jwt.verify(token, secret);
+    const decoded = jwt.verify(token, activeSecret);
 
     // 🎯 核心修正：加入強制防禦，確保 userId 絕對不會是 undefined
     const userId = decoded.id || decoded.userId || (decoded.user ? decoded.user.id : null);
@@ -52,9 +54,9 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'unauthorized', message: '憑證內解析不到使用者識別碼' });
     }
 
-    const [rows] = await pool.execute(
-      'SELECT id, email, registered_at AS createdAt FROM users WHERE id = ? LIMIT 1',
-      [userId]
+    const [rows] = await activePool.execute(
+      'SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1',
+      { id: userId }
     );
 
     if (!rows.length) {
@@ -67,10 +69,13 @@ async function requireAuth(req, res, next) {
     console.error('auth middleware error:', err);
     return res.status(401).json({ error: 'unauthorized', message: '憑證已過期或不合法' });
   }
+  };
 }
 
+const requireAuth = createRequireAuth();
+
 const authMiddlewareUniversal = function(config) {
-  return requireAuth;
+  return createRequireAuth(config);
 };
 
 authMiddlewareUniversal.normalizeEmail = normalizeEmail;
