@@ -1,6 +1,13 @@
 package com.example.myapplication.ui
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -52,6 +60,7 @@ fun VenueParkingScreen(
     var searchRadius by remember { mutableStateOf(500f) } // 預設搜尋方圓 500 公尺
     var parkingLots by remember { mutableStateOf<List<ParkingItem>>(emptyList()) }
     var isParkingLoading by remember { mutableStateOf(false) }
+    var currentLocation by remember { mutableStateOf<Location?>(null) }
 
     val sampleVenues = listOf(
         Pair(1, "台北小巨蛋"),
@@ -91,9 +100,45 @@ fun VenueParkingScreen(
         })
     }
 
+    fun hasLocationPermission(): Boolean {
+        val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    fun searchByCurrentLocation() {
+        if (!hasLocationPermission()) return
+        val location = context.findLastKnownLocation()
+        if (location == null) {
+            Toast.makeText(context, "抓不到目前位置，請先開啟定位後再試一次", Toast.LENGTH_SHORT).show()
+            return
+        }
+        currentLocation = location
+        selectedVenueId = null
+        addressInput = "目前位置"
+        executeParkingSearch("/api/parking/near?lat=${location.latitude}&lng=${location.longitude}&radius=${searchRadius.toInt()}")
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            searchByCurrentLocation()
+        } else {
+            Toast.makeText(context, "需要定位權限才能搜尋目前位置附近停車場", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     LaunchedEffect(selectedVenueId, searchRadius) {
-        selectedVenueId?.let { id ->
-            executeParkingSearch("/api/parking/near?venueId=$id&radius=${searchRadius.toInt()}")
+        val location = currentLocation
+        if (location != null && selectedVenueId == null) {
+            executeParkingSearch("/api/parking/near?lat=${location.latitude}&lng=${location.longitude}&radius=${searchRadius.toInt()}")
+        } else {
+            selectedVenueId?.let { id ->
+                executeParkingSearch("/api/parking/near?venueId=$id&radius=${searchRadius.toInt()}")
+            }
         }
     }
 
@@ -141,7 +186,21 @@ fun VenueParkingScreen(
                                     selectedVenueId = null // 清空選中的場館按鈕，切換為純地址查詢
                                     val encodedAddress = URLEncoder.encode(kw, "UTF-8")
                                     // 對接後端的模糊地址查詢路徑
-                                    executeParkingSearch("/api/parking/near?venueId=1&radius=${searchRadius.toInt()}") 
+                                    if (kw == "目前位置" || kw.contains("定位")) {
+                                        if (hasLocationPermission()) {
+                                            searchByCurrentLocation()
+                                        } else {
+                                            locationPermissionLauncher.launch(
+                                                arrayOf(
+                                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                                )
+                                            )
+                                        }
+                                    } else {
+                                        currentLocation = null
+                                        executeParkingSearch("/api/parking/near?address=$encodedAddress&radius=${searchRadius.toInt()}")
+                                    }
                                 }
                             }
                         ) {
@@ -165,7 +224,8 @@ fun VenueParkingScreen(
                         val isSelected = selectedVenueId == id
                         OutlinedButton(
                             onClick = { 
-                                selectedVenueId = id 
+                                selectedVenueId = id
+                                currentLocation = null
                                 addressInput = name // 連動：點選按鈕時自動填入輸入框，符合組員邏輯！
                             },
                             shape = RoundedCornerShape(99.dp),
@@ -182,6 +242,26 @@ fun VenueParkingScreen(
                 HorizontalDivider(color = colors.fineLine.copy(alpha = 0.4f), thickness = 1.dp)
 
                 // 滑桿控制搜尋半徑
+                OutlinedButton(
+                    onClick = {
+                        if (hasLocationPermission()) {
+                            searchByCurrentLocation()
+                        } else {
+                            locationPermissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.5.dp, colors.cobalt)
+                ) {
+                    Text("使用目前位置搜尋", color = colors.cobalt, fontWeight = FontWeight.Bold)
+                }
+
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -284,3 +364,16 @@ data class ParkingUiColors(
     val muted: Color,
     val goldSoft: Color
 )
+
+private fun Context.findLastKnownLocation(): Location? {
+    val locationManager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val hasFine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val hasCoarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!hasFine && !hasCoarse) return null
+
+    return runCatching {
+        locationManager.getProviders(true)
+            .mapNotNull { provider -> locationManager.getLastKnownLocation(provider) }
+            .maxByOrNull { it.time }
+    }.getOrNull()
+}

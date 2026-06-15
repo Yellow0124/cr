@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const pool = require('../config/db');
 
 const router = express.Router();
@@ -60,18 +61,172 @@ function fallbackResponse(venueId, radius) {
   };
 }
 
+function fallbackLocationResponse(lat, lng, radius) {
+  const items = fallbackParkingLots
+    .map(item => {
+      const distance = haversineMeters(lat, lng, item.latitude, item.longitude);
+      return {
+        ...item,
+        staticDistance: `${distance}m`,
+        dynamic_distance_meters: distance
+      };
+    })
+    .filter(item => item.dynamic_distance_meters <= radius)
+    .sort((a, b) => a.dynamic_distance_meters - b.dynamic_distance_meters);
+
+  return {
+    venueId: null,
+    venueName: '目前位置',
+    venue_coordinates: { latitude: lat, longitude: lng },
+    search_radius_meters: radius,
+    source: 'fallback',
+    total: items.length,
+    items
+  };
+}
+
+function fallbackGeocodeAddress(address) {
+  const normalized = String(address || '').toLowerCase();
+  const aliases = [
+    { keywords: ['小巨蛋', 'taipei arena'], venueId: 1 },
+    { keywords: ['大巨蛋', 'taipei dome'], venueId: 2 },
+    { keywords: ['zepp'], venueId: 3 },
+    { keywords: ['legacy', '華山'], venueId: 4 },
+    { keywords: ['高雄', '海音', '流行音樂中心'], venueId: 5 }
+  ];
+
+  const match = aliases.find(item =>
+    item.keywords.some(keyword => normalized.includes(keyword.toLowerCase()))
+  );
+  return fallbackVenues.find(item => item.id === match?.venueId) || null;
+}
+
+async function geocodeAddress(address) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    throw new Error('GOOGLE_MAPS_API_KEY is not configured');
+  }
+
+  const response = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+    params: {
+      address,
+      key: apiKey,
+      region: 'tw',
+      language: 'zh-TW'
+    },
+    timeout: Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 8000)
+  });
+
+  if (response.data?.status !== 'OK' || !response.data.results?.length) {
+    throw new Error(`Google geocoding failed: ${response.data?.status || 'NO_RESULT'}`);
+  }
+
+  const location = response.data.results[0].geometry.location;
+  return {
+    latitude: Number(location.lat),
+    longitude: Number(location.lng),
+    formattedAddress: response.data.results[0].formatted_address
+  };
+}
+
 router.get('/near', async (req, res) => {
   const venueId = Number(req.query.venueId);
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const address = String(req.query.address || '').trim();
   const radius = Math.max(Number(req.query.radius || 500), 100);
+  const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
+  const hasAddress = address.length > 0;
 
-  if (!venueId) {
+  if (!venueId && !hasCoordinates && !hasAddress) {
     return res.status(400).json({
       error: 'missing_fields',
-      message: 'venueId is required'
+      message: 'venueId, lat/lng, or address is required'
     });
   }
 
   try {
+    if (hasAddress) {
+      const geocoded = await geocodeAddress(address);
+      const [parkingRows] = await pool.execute(
+        `
+        SELECT
+          id,
+          venue_id AS venueId,
+          name,
+          address,
+          fee,
+          status,
+          distance AS staticDistance,
+          latitude,
+          longitude,
+          ROUND(
+            6371000 * 2 * ASIN(
+              SQRT(
+                POWER(SIN((RADIANS(latitude) - RADIANS(?)) / 2), 2) +
+                COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+                POWER(SIN((RADIANS(longitude) - RADIANS(?)) / 2), 2)
+              )
+            )
+          ) AS dynamic_distance_meters
+        FROM parking_lots
+        HAVING dynamic_distance_meters <= ?
+        ORDER BY dynamic_distance_meters ASC
+        `,
+        [geocoded.latitude, geocoded.latitude, geocoded.longitude, radius]
+      );
+
+      return res.json({
+        venueId: null,
+        venueName: geocoded.formattedAddress || address,
+        venue_coordinates: { latitude: geocoded.latitude, longitude: geocoded.longitude },
+        search_radius_meters: radius,
+        source: 'google-geocoding',
+        total: parkingRows.length,
+        items: parkingRows
+      });
+    }
+
+    if (hasCoordinates) {
+      const [parkingRows] = await pool.execute(
+        `
+        SELECT
+          id,
+          venue_id AS venueId,
+          name,
+          address,
+          fee,
+          status,
+          distance AS staticDistance,
+          latitude,
+          longitude,
+          ROUND(
+            6371000 * 2 * ASIN(
+              SQRT(
+                POWER(SIN((RADIANS(latitude) - RADIANS(?)) / 2), 2) +
+                COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+                POWER(SIN((RADIANS(longitude) - RADIANS(?)) / 2), 2)
+              )
+            )
+          ) AS dynamic_distance_meters
+        FROM parking_lots
+        HAVING dynamic_distance_meters <= ?
+        ORDER BY dynamic_distance_meters ASC
+        `,
+        [lat, lat, lng, radius]
+      );
+
+      return res.json({
+        venueId: null,
+        venueName: '目前位置',
+        venue_coordinates: { latitude: lat, longitude: lng },
+        search_radius_meters: radius,
+        source: 'database',
+        total: parkingRows.length,
+        items: parkingRows
+      });
+    }
+
     const [venueRows] = await pool.execute(
       'SELECT name, latitude, longitude FROM venues WHERE id = ? LIMIT 1',
       [venueId]
@@ -125,6 +280,19 @@ router.get('/near', async (req, res) => {
     });
   } catch (err) {
     console.warn('GET /api/parking/near fallback:', err.message);
+    if (hasAddress) {
+      const venue = fallbackGeocodeAddress(address);
+      if (venue) {
+        return res.json(fallbackResponse(venue.id, radius));
+      }
+      return res.status(502).json({
+        error: 'geocoding_failed',
+        message: err.message
+      });
+    }
+    if (hasCoordinates) {
+      return res.json(fallbackLocationResponse(lat, lng, radius));
+    }
     res.json(fallbackResponse(venueId, radius));
   }
 });
