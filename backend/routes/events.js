@@ -142,6 +142,111 @@ router.get('/meta', async (_req, res) => {
   }
 });
 
+router.get('/count', async (_req, res) => {
+  try {
+    const [[row]] = await pool.query('SELECT COUNT(*) AS total FROM defaultdb.events');
+    res.json({ total: Number(row.total || 0) });
+  } catch (err) {
+    console.error('GET /api/events/count error:', err);
+    res.status(500).json({ error: 'server_error', message: err.message });
+  }
+});
+
+router.get('/random', async (req, res) => {
+  try {
+    const limit = Math.max(Math.min(Number(req.query.limit || 5), 20), 1);
+    const [rows] = await pool.query(
+      `
+      SELECT
+        e.id,
+        e.name AS title,
+        COALESCE(v.name, '') AS venue,
+        COALESCE(v.address, '') AS address,
+        COALESCE(DATE_FORMAT(e.ticket_sale_time, '%Y-%m-%d %H:%i:%s'), '') AS saleTime,
+        COALESCE(DATE_FORMAT(e.event_time, '%Y-%m-%d %H:%i:%s'), '') AS activityTime,
+        COALESCE(e.source_site, '') AS source,
+        COALESCE(e.source_website, '') AS ticketType,
+        COALESCE(e.event_url, '') AS url,
+        COALESCE(s.artists_summary, '') AS artist,
+        COALESCE(s.tickets_summary, '') AS price
+      FROM defaultdb.events e
+      LEFT JOIN defaultdb.venues v ON e.venue_id = v.id
+      LEFT JOIN defaultdb.v_all_events_summary s ON s.event_id = e.id
+      WHERE e.name IS NOT NULL AND e.name <> ''
+      ORDER BY RAND()
+      LIMIT ${Number.parseInt(limit, 10)}
+      `
+    );
+    res.json({ total: rows.length, items: rows });
+  } catch (err) {
+    console.error('GET /api/events/random error:', err);
+    res.status(500).json({ error: 'server_error', message: err.message });
+  }
+});
+
+router.get('/:id/artist-profile', async (req, res) => {
+  try {
+    const eventId = Number(req.params.id);
+    const [[eventRow]] = await pool.execute(
+      `
+      SELECT
+        COALESCE(s.artists_summary, '') AS artistsSummary,
+        COALESCE(e.name, '') AS eventName
+      FROM defaultdb.events e
+      LEFT JOIN defaultdb.v_all_events_summary s ON s.event_id = e.id
+      WHERE e.id = ?
+      LIMIT 1
+      `,
+      [eventId]
+    );
+
+    const terms = String(eventRow?.artistsSummary || eventRow?.eventName || '')
+      .split(/[、,，/／|]/)
+      .map(value => value.trim())
+      .filter(Boolean);
+    if (!terms.length) return res.json({ artist: null, news: [], categories: [] });
+
+    const where = terms.map(() => 'a.name LIKE ?').join(' OR ');
+    const params = terms.map(term => `%${term}%`);
+    const [artistRows] = await pool.execute(
+      `
+      SELECT a.id, a.name, a.wiki_intro AS wikiIntro, a.wiki_url AS wikiUrl
+      FROM defaultdb.artists a
+      WHERE ${where}
+      ORDER BY CHAR_LENGTH(a.name) DESC
+      LIMIT 1
+      `,
+      params
+    );
+    const artist = artistRows[0] || null;
+    if (!artist) return res.json({ artist: null, news: [], categories: [] });
+
+    const [news] = await pool.execute(
+      `
+      SELECT title, url, COALESCE(DATE_FORMAT(published_at, '%Y-%m-%d'), '') AS publishedAt
+      FROM defaultdb.artist_news
+      WHERE artist_id = ?
+      ORDER BY published_at DESC, id DESC
+      LIMIT 5
+      `,
+      [artist.id]
+    );
+    const [categories] = await pool.execute(
+      `
+      SELECT genre, language
+      FROM defaultdb.artist_categories
+      WHERE artist_id = ?
+      ORDER BY id ASC
+      `,
+      [artist.id]
+    );
+    res.json({ artist, news, categories });
+  } catch (err) {
+    console.error('GET /api/events/:id/artist-profile error:', err);
+    res.status(500).json({ error: 'server_error', message: err.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const eventId = Number(req.params.id);

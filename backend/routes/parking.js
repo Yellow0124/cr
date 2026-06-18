@@ -297,4 +297,304 @@ router.get('/near', async (req, res) => {
   }
 });
 
+router.get('/places', async (req, res) => {
+  let lat = normalizeCoordinate(req.query.lat, -90, 90);
+  let lng = normalizeCoordinate(req.query.lng, -180, 180);
+  const radius = Math.max(Math.min(Number(req.query.radius || 500), 5000), 100);
+  const type = normalizePlaceType(req.query.type);
+  const keyword = String(req.query.keyword || '').trim();
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: 'invalid_coordinates' });
+  }
+
+  try {
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) throw new Error('GOOGLE_MAPS_API_KEY is not configured');
+
+    if (keyword && type === 'parking') {
+      const resolved = await resolveSearchOrigin(keyword, apiKey);
+      if (resolved) {
+        lat = resolved.latitude;
+        lng = resolved.longitude;
+      }
+    }
+
+    const googleResult = await searchGooglePlaces({ apiKey, type, lat, lng, radius, keyword });
+    const googleItems = googleResult.items.map((place, index) => {
+      const pLat = Number(place.latitude);
+      const pLng = Number(place.longitude);
+      return {
+        id: place.id || `${type}-${index}`,
+        name: place.name || '',
+        address: place.address || '',
+        latitude: pLat,
+        longitude: pLng,
+        rating: place.rating || null,
+        userRatingsTotal: place.userRatingsTotal || 0,
+        openNow: place.openNow ?? null,
+        dynamic_distance_meters: Number.isFinite(pLat) && Number.isFinite(pLng) ? haversineMeters(lat, lng, pLat, pLng) : null,
+        source: 'google-places'
+      };
+    }).filter(item => Number.isFinite(item.latitude) && Number.isFinite(item.longitude));
+    const offlineItems = await getOfflinePlaces({ type, lat, lng, radius, keyword });
+    const items = mergePlaces(googleItems, offlineItems);
+
+    res.json({
+      source: 'google-places',
+      googleApi: googleResult.api,
+      type,
+      total: items.length,
+      search_radius_meters: radius,
+      origin: { latitude: lat, longitude: lng },
+      attribution: '由 Google 提供資料',
+      items
+    });
+  } catch (err) {
+    console.error('GET /api/parking/places error:', err.message);
+    const offlineItems = await getOfflinePlaces({ type, lat, lng, radius, keyword }).catch(() => []);
+    const fallbackItems = offlineItems.length
+      ? offlineItems
+      : type === 'restaurant'
+        ? fallbackRestaurants(lat, lng, radius)
+        : fallbackLocationResponse(lat, lng, radius).items;
+    res.json({
+      source: 'fallback',
+      type,
+      total: fallbackItems.length,
+      search_radius_meters: radius,
+      origin: { latitude: lat, longitude: lng },
+      googleStatus: err.googleStatus || null,
+      googleError: err.googleMessage || err.message,
+      message: ['OVER_QUERY_LIMIT', 'REQUEST_DENIED'].includes(err.googleStatus)
+        ? '目前無法連線至 Google 服務，改為顯示離線紀錄'
+        : undefined,
+      items: fallbackItems
+    });
+  }
+});
+
+async function searchGooglePlaces({ apiKey, type, lat, lng, radius, keyword }) {
+  const timeout = Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 8000);
+  try {
+    const response = await axios.post(
+      'https://places.googleapis.com/v1/places:searchNearby',
+      {
+        includedTypes: [type],
+        maxResultCount: 20,
+        languageCode: 'zh-TW',
+        locationRestriction: {
+          circle: {
+            center: { latitude: lat, longitude: lng },
+            radius
+          }
+        }
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.currentOpeningHours.openNow'
+        },
+        timeout
+      }
+    );
+    return {
+      api: 'places-new',
+      items: (response.data?.places || []).map(place => ({
+        id: place.id,
+        name: place.displayName?.text || '',
+        address: place.formattedAddress || '',
+        latitude: Number(place.location?.latitude),
+        longitude: Number(place.location?.longitude),
+        rating: place.rating || null,
+        userRatingsTotal: place.userRatingCount || 0,
+        openNow: place.currentOpeningHours?.openNow ?? null
+      }))
+    };
+  } catch (newApiError) {
+    try {
+      const response = await axios.get('https://maps.googleapis.com/maps/api/place/nearbysearch/json', {
+        params: {
+          key: apiKey,
+          location: `${lat},${lng}`,
+          radius,
+          type,
+          keyword: keyword || undefined,
+          language: 'zh-TW'
+        },
+        timeout
+      });
+      if (!['OK', 'ZERO_RESULTS'].includes(response.data?.status)) {
+        const error = new Error(`Google Places legacy failed: ${response.data?.status || 'UNKNOWN'}`);
+        error.googleStatus = response.data?.status || 'UNKNOWN';
+        error.googleMessage = response.data?.error_message || null;
+        throw error;
+      }
+      return {
+        api: 'places-legacy',
+        items: (response.data?.results || []).map(place => ({
+          id: place.place_id,
+          name: place.name || '',
+          address: place.vicinity || '',
+          latitude: Number(place.geometry?.location?.lat),
+          longitude: Number(place.geometry?.location?.lng),
+          rating: place.rating || null,
+          userRatingsTotal: place.user_ratings_total || 0,
+          openNow: place.opening_hours?.open_now ?? null
+        }))
+      };
+    } catch (legacyError) {
+      const newData = newApiError.response?.data?.error;
+      const error = new Error('Google Places APIs are unavailable');
+      error.googleStatus = legacyError.googleStatus || newData?.status || 'REQUEST_FAILED';
+      error.googleMessage = legacyError.googleMessage || newData?.message || legacyError.message || newApiError.message;
+      throw error;
+    }
+  }
+}
+
+async function resolveSearchOrigin(keyword, apiKey) {
+  const geocoded = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
+    params: { address: keyword, key: apiKey, region: 'tw', language: 'zh-TW' },
+    timeout: Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 8000)
+  }).then(response => {
+    if (response.data?.status === 'OK' && response.data.results?.length) {
+      const location = response.data.results[0].geometry.location;
+      return { latitude: Number(location.lat), longitude: Number(location.lng) };
+    }
+    return null;
+  }).catch(() => null);
+  if (geocoded) return geocoded;
+
+  return axios.get('https://maps.googleapis.com/maps/api/place/findplacefromtext/json', {
+    params: {
+      input: keyword,
+      inputtype: 'textquery',
+      fields: 'geometry,name',
+      key: apiKey,
+      language: 'zh-TW'
+    },
+    timeout: Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 8000)
+  }).then(response => {
+    const candidate = response.data?.candidates?.[0];
+    const location = candidate?.geometry?.location;
+    return location ? { latitude: Number(location.lat), longitude: Number(location.lng) } : null;
+  }).catch(() => null);
+}
+
+async function getOfflinePlaces({ type, lat, lng, radius, keyword }) {
+  if (type === 'restaurant' && await dbTableExists('massive_restaurants')) {
+    const [rows] = await pool.execute(
+      `
+      SELECT
+        id,
+        name,
+        COALESCE(address, '') AS address,
+        latitude,
+        longitude,
+        ROUND(
+          6371000 * 2 * ASIN(
+            SQRT(
+              POWER(SIN((RADIANS(latitude) - RADIANS(?)) / 2), 2) +
+              COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+              POWER(SIN((RADIANS(longitude) - RADIANS(?)) / 2), 2)
+            )
+          )
+        ) AS dynamic_distance_meters
+      FROM massive_restaurants
+      WHERE (? = '' OR name LIKE ? OR address LIKE ?)
+      HAVING dynamic_distance_meters <= ?
+      ORDER BY dynamic_distance_meters ASC
+      LIMIT 40
+      `,
+      [lat, lat, lng, keyword, `%${keyword}%`, `%${keyword}%`, radius]
+    );
+    return rows.map(row => normalizeOfflinePlace(row, 'database'));
+  }
+
+  if (type === 'parking' && await dbTableExists('parking_lots')) {
+    const [rows] = await pool.execute(
+      `
+      SELECT
+        id,
+        name,
+        COALESCE(address, '') AS address,
+        latitude,
+        longitude,
+        COALESCE(status, '') AS status,
+        ROUND(
+          6371000 * 2 * ASIN(
+            SQRT(
+              POWER(SIN((RADIANS(latitude) - RADIANS(?)) / 2), 2) +
+              COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+              POWER(SIN((RADIANS(longitude) - RADIANS(?)) / 2), 2)
+            )
+          )
+        ) AS dynamic_distance_meters
+      FROM parking_lots
+      WHERE (? = '' OR name LIKE ? OR address LIKE ?)
+      HAVING dynamic_distance_meters <= ?
+      ORDER BY dynamic_distance_meters ASC
+      LIMIT 40
+      `,
+      [lat, lat, lng, keyword, `%${keyword}%`, `%${keyword}%`, radius]
+    );
+    return rows.map(row => normalizeOfflinePlace(row, 'database'));
+  }
+
+  return [];
+}
+
+async function dbTableExists(tableName) {
+  const [rows] = await pool.execute(
+    'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
+    [tableName]
+  );
+  return rows.length > 0;
+}
+
+function normalizeOfflinePlace(row, source) {
+  return {
+    id: String(row.id || `${source}-${row.name}`),
+    name: row.name || '',
+    address: row.address || '',
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    status: row.status || '',
+    dynamic_distance_meters: Number(row.dynamic_distance_meters || 0),
+    source
+  };
+}
+
+function mergePlaces(primary, secondary) {
+  const seen = new Set();
+  return [...primary, ...secondary].filter(item => {
+    const key = `${String(item.name).trim().toLowerCase()}|${Number(item.latitude).toFixed(5)}|${Number(item.longitude).toFixed(5)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => Number(a.dynamic_distance_meters || 0) - Number(b.dynamic_distance_meters || 0));
+}
+
+function normalizePlaceType(value) {
+  const type = String(value || 'parking').trim().toLowerCase();
+  return type === 'restaurant' ? 'restaurant' : 'parking';
+}
+
+function normalizeCoordinate(value, min, max) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : NaN;
+}
+
+function fallbackRestaurants(lat, lng, radius) {
+  return [
+    { id: 'r1', name: 'Taipei Arena Cafe', address: 'Taipei Arena area', latitude: 25.0512, longitude: 121.5511, rating: 4.2, source: 'fallback' },
+    { id: 'r2', name: 'Songshan Noodles', address: 'Songshan District', latitude: 25.0501, longitude: 121.5528, rating: 4.0, source: 'fallback' },
+    { id: 'r3', name: 'Xinyi Bistro', address: 'Xinyi District', latitude: 25.0339, longitude: 121.5611, rating: 4.3, source: 'fallback' }
+  ].map(item => ({ ...item, dynamic_distance_meters: haversineMeters(lat, lng, item.latitude, item.longitude) }))
+    .filter(item => item.dynamic_distance_meters <= radius)
+    .sort((a, b) => a.dynamic_distance_meters - b.dynamic_distance_meters);
+}
+
 module.exports = router;

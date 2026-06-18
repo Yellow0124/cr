@@ -7,6 +7,8 @@ const createAuthRouter = require('./routes/auth');
 const createRemindersRouter = require('./routes/reminders');
 const statsRoute = require('./routes/stats');
 const parkingRouter = require('./routes/parking');
+const createRecommendationsRouter = require('./routes/recommendations');
+const venuesRouter = require('./routes/venues');
 const { authMiddleware } = require('./auth');
 
 
@@ -31,6 +33,7 @@ function createApp(options = {}) {
         '/api/auth/me',
         '/api/events',
         '/api/events/meta',
+        '/api/venues',
         '/api/reminders',
         '/api/stats/summary',
         '/api/stats/price',
@@ -49,11 +52,22 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/api/health/db', async (_req, res) => {
+    try {
+      const [[row]] = await pool.query('SELECT COUNT(*) AS eventCount FROM defaultdb.events');
+      res.json({ ok: true, eventCount: Number(row.eventCount || 0), database: 'defaultdb', table: 'events' });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: 'db_connection_failed', message: err.message });
+    }
+  });
+
   app.use('/api/auth', createAuthRouter({ pool, secret: authSecret, now, requireAuth }));
   app.use('/api/events', eventsRoute);
   app.use('/api/reminders', createRemindersRouter({ pool, requireAuth }));
+  app.use('/api/recommendations', createRecommendationsRouter({ pool, requireAuth }));
   app.use('/api/stats', statsRoute);
   app.use('/api/parking', parkingRouter);
+  app.use('/api/venues', venuesRouter);
 
   app.use((req, res) => {
     res.status(404).json({ error: 'not_found', path: req.path });

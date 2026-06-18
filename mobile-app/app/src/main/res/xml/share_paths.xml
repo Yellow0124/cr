@@ -3,4 +3,10 @@
     <cache-path
         name="ticket_share"
         path="shared_tickets/" />
+    <cache-path
+        name="ticket_ocr"
+        path="ocr_tickets/" />
+    <files-path
+        name="ticket_images"
+        path="ticket_images/" />
 </paths>

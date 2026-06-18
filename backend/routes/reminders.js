@@ -15,7 +15,7 @@ function createRemindersRouter({ pool, requireAuth }) {
           r.user_id AS userId,
           COALESCE(e.event_name, '精選售票活動') AS title,
           COALESCE(DATE_FORMAT(r.reminded_at, '%Y-%m-%d %H:%i:%s'), '') AS saleAt,
-          30 AS offsetsMinutes,
+          COALESCE(TIMESTAMPDIFF(MINUTE, r.reminded_at, e.ticket_sale_time), 0) AS offsetsMinutes,
           1 AS enabled,
           COALESCE(DATE_FORMAT(r.created_at, '%Y-%m-%d %H:%i:%s'), '') AS createdAt,
           COALESCE(DATE_FORMAT(r.created_at, '%Y-%m-%d %H:%i:%s'), '') AS updatedAt
@@ -39,11 +39,19 @@ function createRemindersRouter({ pool, requireAuth }) {
   // ==========================================
   router.post('/', requireAuth, async (req, res) => {
     try {
-      const { eventId, event_id, remindedAt, reminded_at } = req.body;
+      const { eventId, event_id, remindedAt, reminded_at, saleAt, sale_at, daysBefore, hoursBefore, minutesBefore } = req.body;
       
       // 彈性相容 Android 端傳過來的各種命名蛇形或駝峰命名
       const finalEventId = Number(eventId || event_id || 1);
-      const finalRemindedAt = String(remindedAt || reminded_at || '').trim();
+      let finalRemindedAt = String(remindedAt || reminded_at || '').trim();
+      if (!finalRemindedAt) {
+        const saleText = String(saleAt || sale_at || '').trim();
+        const saleDate = saleText ? new Date(saleText) : null;
+        if (saleDate && Number.isFinite(saleDate.getTime())) {
+          const offsetMinutes = normalizeOffsetMinutes(daysBefore, hoursBefore, minutesBefore);
+          finalRemindedAt = formatMysqlDate(new Date(saleDate.getTime() - offsetMinutes * 60 * 1000));
+        }
+      }
 
       if (!finalRemindedAt) {
         return res.status(400).json({
@@ -67,7 +75,7 @@ function createRemindersRouter({ pool, requireAuth }) {
           r.user_id AS userId,
           COALESCE(e.event_name, '精選售票活動') AS title,
           COALESCE(DATE_FORMAT(r.reminded_at, '%Y-%m-%d %H:%i:%s'), '') AS saleAt,
-          30 AS offsetsMinutes,
+          COALESCE(TIMESTAMPDIFF(MINUTE, r.reminded_at, e.ticket_sale_time), 0) AS offsetsMinutes,
           1 AS enabled,
           COALESCE(DATE_FORMAT(r.created_at, '%Y-%m-%d %H:%i:%s'), '') AS createdAt
         FROM reminders r
@@ -102,6 +110,18 @@ function createRemindersRouter({ pool, requireAuth }) {
   });
 
   return router;
+}
+
+function normalizeOffsetMinutes(days, hours, minutes) {
+  const d = Math.max(Math.min(Number(days || 0), 7), 0);
+  const h = Math.max(Math.min(Number(hours || 0), 23), 0);
+  const m = Math.max(Math.min(Number(minutes || 0), 59), 0);
+  return Math.round(d) * 1440 + Math.round(h) * 60 + Math.round(m);
+}
+
+function formatMysqlDate(date) {
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 module.exports = createRemindersRouter;
