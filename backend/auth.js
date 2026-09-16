@@ -55,7 +55,7 @@ function createRequireAuth(config = {}) {
     }
 
     const [rows] = await activePool.execute(
-      'SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1',
+      'SELECT id, email, registered_at AS createdAt FROM users WHERE id = :id LIMIT 1',
       { id: userId }
     );
 
@@ -67,7 +67,10 @@ function createRequireAuth(config = {}) {
     next();
   } catch (err) {
     console.error('auth middleware error:', err);
-    return res.status(401).json({ error: 'unauthorized', message: '憑證已過期或不合法' });
+    if (['TokenExpiredError', 'JsonWebTokenError', 'NotBeforeError'].includes(err.name)) {
+      return res.status(401).json({ error: 'unauthorized', message: '憑證已過期或不合法' });
+    }
+    return res.status(503).json({ error: 'auth_service_unavailable', message: '登入驗證暫時無法使用，請稍後重試' });
   }
   };
 }

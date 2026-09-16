@@ -5,7 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -32,6 +34,10 @@
                 android:resource="@xml/share_paths" />
         </provider>
 
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${googleMapsApiKey}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -42,6 +48,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

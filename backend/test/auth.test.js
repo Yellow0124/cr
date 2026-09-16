@@ -49,7 +49,7 @@ class FakePool {
       return [{ insertId: user.id }];
     }
 
-    if (normalized.includes('select id, email, created_at as createdat from users where id = :id')) {
+    if (normalized.includes('select id, email, registered_at as createdat from users where id = :id')) {
       const user = this.users.find(item => item.id === params.id);
       return [[user ? { id: user.id, email: user.email, createdAt: user.created_at } : undefined].filter(Boolean)];
     }

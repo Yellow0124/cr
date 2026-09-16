@@ -40,7 +40,7 @@ function createAuthRouter({ pool: injectedPool, secret, now, requireAuth }) {
       );
 
       const [rows] = await activePool.execute(
-        'SELECT id, email, created_at AS createdAt FROM users WHERE id = :id LIMIT 1',
+        'SELECT id, email, registered_at AS createdAt FROM users WHERE id = :id LIMIT 1',
         { id: result.insertId }
       );
 
